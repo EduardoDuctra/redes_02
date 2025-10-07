@@ -8,10 +8,16 @@ import lombok.SneakyThrows;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class UDPServiceImpl implements UDPService {
 
     private Usuario usuario;
+    private Map<String, Usuario> usuariosConectados = new HashMap<>();
+    private final CopyOnWriteArrayList<UDPServiceUsuarioListener> usuarioListeners = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<UDPServiceMensagemListener> mensagemListeners = new CopyOnWriteArrayList<>();
 
     public UDPServiceImpl() {
         // construtor vazio para manter a interface
@@ -57,13 +63,13 @@ public class UDPServiceImpl implements UDPService {
         new Thread(() -> {
             try (DatagramSocket socket = new DatagramSocket(8080)) {
                 byte[] buffer = new byte[1024];
+                ObjectMapper mapper = new ObjectMapper();
 
                 while (true) {
                     DatagramPacket pacote = new DatagramPacket(buffer, buffer.length);
                     socket.receive(pacote);
 
                     String dados = new String(pacote.getData(), 0, pacote.getLength());
-                    ObjectMapper mapper = new ObjectMapper();
                     Mensagem msg = mapper.readValue(dados, Mensagem.class);
 
                     // ignora a própria sonda
@@ -72,9 +78,29 @@ public class UDPServiceImpl implements UDPService {
                         continue;
                     }
 
-                    // aqui você atualizaria a lista de usuários
-                    // por exemplo, avisando listeners que um novo usuário foi adicionado
-                    System.out.println("Sonda recebida de: " + msg.getUsuario() + " - status: " + msg.getStatus());
+                    // atualiza ou adiciona usuário na lista
+                    Usuario u;
+                    if (!usuariosConectados.containsKey(msg.getUsuario())) {
+                        u = new Usuario(msg.getUsuario(),
+                                Usuario.StatusUsuario.valueOf(msg.getStatus()),
+                                pacote.getAddress());
+                        usuariosConectados.put(u.getNome(), u);
+
+                        // notifica listeners
+                        for (UDPServiceUsuarioListener l : usuarioListeners) {
+                            l.usuarioAdicionado(u);
+                        }
+                    } else {
+                        u = usuariosConectados.get(msg.getUsuario());
+                        u.setStatus(Usuario.StatusUsuario.valueOf(msg.getStatus()));
+
+                        // notifica listeners
+                        for (UDPServiceUsuarioListener l : usuarioListeners) {
+                            l.usuarioAlterado(u);
+                        }
+                    }
+
+                    System.out.println("Sonda recebida de: " + u.getNome() + " - status: " + u.getStatus());
                 }
             } catch (Exception e) {
                 e.printStackTrace();
@@ -82,12 +108,57 @@ public class UDPServiceImpl implements UDPService {
         }).start();
     }
 
-
     @Override
     public void enviarMensagem(String mensagem, Usuario destinatario, boolean chatGeral) {
-        // implementar envio de mensagem individual ou grupo
-    }
+        new Thread(() -> {
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                DatagramSocket socket = new DatagramSocket();
+                socket.setBroadcast(true); // habilita broadcast se for grupo
 
+                Mensagem msg = new Mensagem();
+                msg.setUsuario(usuario.getNome()); // remetente
+                msg.setMsg(mensagem);
+
+                if (chatGeral) {
+                    msg.setTipoMensagem(Mensagem.TipoMensagem.msg_grupo);
+                    // broadcast para toda a rede
+                    byte[] bMensagem = mapper.writeValueAsBytes(msg);
+                    DatagramPacket pacote = new DatagramPacket(
+                            bMensagem,
+                            bMensagem.length,
+                            InetAddress.getByName("255.255.255.255"),
+                            8080
+                    );
+                    socket.send(pacote);
+                } else {
+                    // mensagem individual
+                    msg.setTipoMensagem(Mensagem.TipoMensagem.msg_individual);
+                    // usa endereço do destinatário da lista de usuários conectados
+                    Usuario u = usuariosConectados.get(destinatario.getNome());
+                    if (u != null) {
+                        byte[] bMensagem = mapper.writeValueAsBytes(msg);
+                        DatagramPacket pacote = new DatagramPacket(
+                                bMensagem,
+                                bMensagem.length,
+                                u.getEndereco(),
+                                8080
+                        );
+                        socket.send(pacote);
+                    }
+                }
+
+                // notifica listeners locais de que a mensagem foi enviada
+                for (UDPServiceMensagemListener l : mensagemListeners) {
+                    l.mensagemRecebida(mensagem, destinatario, chatGeral);
+                }
+
+                socket.close();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }).start();
+    }
 
     @Override
     public void usuarioAlterado(Usuario usuario) {
@@ -100,11 +171,11 @@ public class UDPServiceImpl implements UDPService {
 
     @Override
     public void addListenerMensagem(UDPServiceMensagemListener listener) {
-        // implementar registro do listener
+        mensagemListeners.add(listener);
     }
 
     @Override
     public void addListenerUsuario(UDPServiceUsuarioListener listener) {
-        // implementar registro do listener
+        usuarioListeners.add(listener);
     }
 }
