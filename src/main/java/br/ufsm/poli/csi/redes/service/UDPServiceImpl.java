@@ -73,58 +73,65 @@ public class UDPServiceImpl implements UDPService {
                     Mensagem msg = mapper.readValue(dados, Mensagem.class);
 
                     // ignora mensagens enviadas por mim mesmo
-                    if (msg.getUsuario().equals(usuario.getNome())) {
+                    if (usuario != null && msg.getUsuario().equals(usuario.getNome())) {
                         continue;
                     }
 
-                    // atualiza ou adiciona usuário na lista apenas para sondas
-                    if (msg.getTipoMensagem() == Mensagem.TipoMensagem.sonda) {
-                        Usuario u;
-                        if (!usuariosConectados.containsKey(msg.getUsuario())) {
-                            // trata status nulo
-                            Usuario.StatusUsuario status = (msg.getStatus() != null) ?
-                                    Usuario.StatusUsuario.valueOf(msg.getStatus()) : Usuario.StatusUsuario.DISPONIVEL;
+                    switch (msg.getTipoMensagem()) {
+                        case sonda -> {
+                            Usuario u = usuariosConectados.get(msg.getUsuario());
 
-                            u = new Usuario(msg.getUsuario(), status, pacote.getAddress());
-                            usuariosConectados.put(u.getNome(), u);
+                            // cria novo usuário se não existir
+                            if (u == null) {
+                                Usuario.StatusUsuario status = (msg.getStatus() != null) ?
+                                        Usuario.StatusUsuario.valueOf(msg.getStatus()) :
+                                        Usuario.StatusUsuario.DISPONIVEL;
 
-                            // notifica listeners
-                            for (UDPServiceUsuarioListener l : usuarioListeners) {
-                                l.usuarioAdicionado(u);
-                            }
-                        } else {
-                            u = usuariosConectados.get(msg.getUsuario());
-                            if (msg.getStatus() != null) {
-                                u.setStatus(Usuario.StatusUsuario.valueOf(msg.getStatus()));
+                                u = new Usuario(msg.getUsuario(), status, pacote.getAddress());
+                                usuariosConectados.put(u.getNome(), u);
+
                                 // notifica listeners
+                                for (UDPServiceUsuarioListener l : usuarioListeners) {
+                                    l.usuarioAdicionado(u);
+                                }
+                            } else if (msg.getStatus() != null) {
+                                u.setStatus(Usuario.StatusUsuario.valueOf(msg.getStatus()));
                                 for (UDPServiceUsuarioListener l : usuarioListeners) {
                                     l.usuarioAlterado(u);
                                 }
                             }
+
+                            System.out.println("Sonda recebida de: " + msg.getUsuario() + " - status: " + msg.getStatus());
                         }
 
-                        System.out.println("Sonda recebida de: " + msg.getUsuario() + " - status: " + msg.getStatus());
-                    }
+                        case msg_individual, msg_grupo -> {
+                            Usuario remetente = usuariosConectados.get(msg.getUsuario());
 
-                    // trata mensagens enviadas (individuais ou grupo)
-                    if (msg.getTipoMensagem() == Mensagem.TipoMensagem.msg_individual ||
-                            msg.getTipoMensagem() == Mensagem.TipoMensagem.msg_grupo) {
+                            if (remetente == null) {
+                                // cria usuário temporário se não existir
+                                remetente = new Usuario(msg.getUsuario(),
+                                        Usuario.StatusUsuario.DISPONIVEL,
+                                        pacote.getAddress());
+                                usuariosConectados.put(remetente.getNome(), remetente);
+                                for (UDPServiceUsuarioListener l : usuarioListeners) {
+                                    l.usuarioAdicionado(remetente);
+                                }
+                            }
 
-                        Usuario remetente = usuariosConectados.get(msg.getUsuario());
-                        if (remetente == null) {
-                            // cria usuário temporário se não existir
-                            remetente = new Usuario(msg.getUsuario(),
-                                    Usuario.StatusUsuario.DISPONIVEL,
-                                    pacote.getAddress());
-                            usuariosConectados.put(remetente.getNome(), remetente);
-                            for (UDPServiceUsuarioListener l : usuarioListeners) {
-                                l.usuarioAdicionado(remetente);
+                            boolean chatGeral = msg.getTipoMensagem() == Mensagem.TipoMensagem.msg_grupo;
+
+                            // evita duplicar a própria mensagem de grupo
+                            if (chatGeral && usuario != null && msg.getUsuario().equals(usuario.getNome())) {
+                                continue;
+                            }
+
+                            for (UDPServiceMensagemListener l : mensagemListeners) {
+                                l.mensagemRecebida(msg.getMsg(), remetente, chatGeral);
                             }
                         }
 
-                        boolean chatGeral = msg.getTipoMensagem() == Mensagem.TipoMensagem.msg_grupo;
-                        for (UDPServiceMensagemListener l : mensagemListeners) {
-                            l.mensagemRecebida(msg.getMsg(), remetente, chatGeral);
+                        default -> {
+                            // ignorar outros tipos de mensagem
                         }
                     }
                 }
@@ -133,6 +140,7 @@ public class UDPServiceImpl implements UDPService {
             }
         }).start();
     }
+
 
     @Override
     public void enviarMensagem(String mensagem, Usuario destinatario, boolean chatGeral) {

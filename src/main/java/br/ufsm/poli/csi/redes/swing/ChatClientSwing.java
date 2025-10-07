@@ -109,7 +109,7 @@ public class ChatClientSwing extends JFrame {
                 if (evt.getClickCount() == 2) {
                     int index = listaChat.locationToIndex(evt.getPoint());
                     Usuario user = (Usuario) listaChat.getModel().getElementAt(index);
-                    if (!chatsAbertos.containsKey(user.getNome())) {
+                    if (!user.equals(meuUsuario) && !chatsAbertos.containsKey(user.getNome())) {
                         PainelChatPVT painel = new PainelChatPVT(user, false);
                         tabbedPane.add(user.toString(), painel);
                         chatsAbertos.put(user.getNome(), painel);
