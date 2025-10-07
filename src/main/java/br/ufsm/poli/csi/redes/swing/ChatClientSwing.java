@@ -70,8 +70,10 @@ public class ChatClientSwing extends JFrame {
                         item.addActionListener(ev -> {
                             PainelChatPVT painel = (PainelChatPVT) tabbedPane.getComponentAt(tab);
 
-                            if (!painel.chatGeral) { // não envia para o chat geral
-                                udpService.enviarMensagem("fim_chat", painel.getUsuario(), false);
+                            if (!painel.chatGeral) {
+                                if (udpService instanceof UDPServiceImpl) {
+                                    ((UDPServiceImpl) udpService).encerrarChat(painel.getUsuario());
+                                }
                             }
 
                             tabbedPane.remove(tab);
