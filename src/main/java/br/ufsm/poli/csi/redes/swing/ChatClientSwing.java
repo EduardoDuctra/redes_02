@@ -70,6 +70,12 @@ public class ChatClientSwing extends JFrame {
                         JMenuItem item = new JMenuItem("Fechar");
                         item.addActionListener(ev -> {
                             PainelChatPVT painel = (PainelChatPVT) tabbedPane.getComponentAt(tab);
+
+                            // envia a mensagem de fim de chat
+                            if (udpService instanceof UDPServiceImpl) {
+                                ((UDPServiceImpl) udpService).encerrarChat(painel.getUsuario());
+                            }
+
                             tabbedPane.remove(tab);
                             chatsAbertos.remove(painel.getUsuario().getNome());
                         });
@@ -179,6 +185,11 @@ public class ChatClientSwing extends JFrame {
 
         @Override
         public void mensagemRecebida(String mensagem, Usuario remetente, boolean chatGeral) {
+            // evita abrir chat consigo mesmo
+            if (!chatGeral && remetente.getNome().equals(meuUsuario.getNome())) {
+                return;
+            }
+
             PainelChatPVT painel;
             if (chatGeral) {
                 painel = chatsAbertos.get(USER_GERAL.getNome());

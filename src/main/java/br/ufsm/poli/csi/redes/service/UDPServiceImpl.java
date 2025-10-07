@@ -18,6 +18,7 @@ public class UDPServiceImpl implements UDPService {
     private Map<String, Usuario> usuariosConectados = new HashMap<>();
     private final CopyOnWriteArrayList<UDPServiceUsuarioListener> usuarioListeners = new CopyOnWriteArrayList<>();
     private final CopyOnWriteArrayList<UDPServiceMensagemListener> mensagemListeners = new CopyOnWriteArrayList<>();
+    private Map<String, Long> ultimoContato = new HashMap<>();
 
     public UDPServiceImpl() {
         // construtor vazio para manter a interface
@@ -81,7 +82,6 @@ public class UDPServiceImpl implements UDPService {
                         case sonda -> {
                             Usuario u = usuariosConectados.get(msg.getUsuario());
 
-                            // cria novo usuário se não existir
                             if (u == null) {
                                 Usuario.StatusUsuario status = (msg.getStatus() != null) ?
                                         Usuario.StatusUsuario.valueOf(msg.getStatus()) :
@@ -90,7 +90,6 @@ public class UDPServiceImpl implements UDPService {
                                 u = new Usuario(msg.getUsuario(), status, pacote.getAddress());
                                 usuariosConectados.put(u.getNome(), u);
 
-                                // notifica listeners
                                 for (UDPServiceUsuarioListener l : usuarioListeners) {
                                     l.usuarioAdicionado(u);
                                 }
@@ -101,14 +100,21 @@ public class UDPServiceImpl implements UDPService {
                                 }
                             }
 
-                            System.out.println("Sonda recebida de: " + msg.getUsuario() + " - status: " + msg.getStatus());
+                            // Atualiza o último contato do usuário
+                            ultimoContato.put(msg.getUsuario(), System.currentTimeMillis());
                         }
+                        case fim_chat -> {
+                            Usuario remetente = usuariosConectados.get(msg.getUsuario());
+                            if (remetente != null) {
+                                recebendoFimChat(remetente);
+                            }
+                        }
+
 
                         case msg_individual, msg_grupo -> {
                             Usuario remetente = usuariosConectados.get(msg.getUsuario());
 
                             if (remetente == null) {
-                                // cria usuário temporário se não existir
                                 remetente = new Usuario(msg.getUsuario(),
                                         Usuario.StatusUsuario.DISPONIVEL,
                                         pacote.getAddress());
@@ -120,7 +126,7 @@ public class UDPServiceImpl implements UDPService {
 
                             boolean chatGeral = msg.getTipoMensagem() == Mensagem.TipoMensagem.msg_grupo;
 
-                            // evita duplicar a própria mensagem de grupo
+                            // evita mostrar a própria mensagem de grupo
                             if (chatGeral && usuario != null && msg.getUsuario().equals(usuario.getNome())) {
                                 continue;
                             }
@@ -131,7 +137,7 @@ public class UDPServiceImpl implements UDPService {
                         }
 
                         default -> {
-                            // ignorar outros tipos de mensagem
+                            // ignora outros tipos
                         }
                     }
                 }
@@ -159,14 +165,12 @@ public class UDPServiceImpl implements UDPService {
             DatagramPacket pacote;
 
             if (chatGeral) {
-                // broadcast para todos
                 DatagramSocket socket = new DatagramSocket();
                 socket.setBroadcast(true);
                 pacote = new DatagramPacket(bMensagem, bMensagem.length, InetAddress.getByName("255.255.255.255"), 8080);
                 socket.send(pacote);
                 socket.close();
             } else {
-                // mensagem individual
                 Usuario u = usuariosConectados.get(destinatario.getNome());
                 if (u != null && u.getEndereco() != null) {
                     DatagramSocket socket = new DatagramSocket();
@@ -178,15 +182,19 @@ public class UDPServiceImpl implements UDPService {
                 }
             }
 
-            // notifica o listener local para mostrar a mensagem na interface
-            for (UDPServiceMensagemListener l : mensagemListeners) {
-                l.mensagemRecebida(mensagem, usuario, chatGeral);
+            // notifica o listener local apenas para chats privados
+            if (!chatGeral) {
+                for (UDPServiceMensagemListener l : mensagemListeners) {
+                    l.mensagemRecebida(mensagem, usuario, chatGeral);
+                }
             }
 
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
+
+
     @Override
     public void usuarioAlterado(Usuario usuario) {
         this.usuario = usuario; // atualiza usuário
@@ -194,6 +202,8 @@ public class UDPServiceImpl implements UDPService {
         new Thread(new EnviaSonda()).start();
         // inicia recebimento de sondas em background
         receberSondas();
+        // inicia monitoramento de inativos
+        monitorarUsuariosInativos();
     }
 
     @Override
@@ -205,4 +215,78 @@ public class UDPServiceImpl implements UDPService {
     public void addListenerUsuario(UDPServiceUsuarioListener listener) {
         usuarioListeners.add(listener);
     }
+
+    private void monitorarUsuariosInativos() {
+        new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(10000); // verifica a cada 10s
+                    long agora = System.currentTimeMillis();
+
+                    // remove inativos
+                    for (String nome : new HashMap<>(usuariosConectados).keySet()) {
+                        long ultimo = ultimoContato.getOrDefault(nome, agora);
+                        if (agora - ultimo > 30000) { // 30s inativo
+                            Usuario u = usuariosConectados.remove(nome);
+                            ultimoContato.remove(nome);
+
+                            if (u != null) {
+                                for (UDPServiceUsuarioListener l : usuarioListeners) {
+                                    l.usuarioRemovido(u);
+                                }
+                                System.out.println("Usuário removido por inatividade: " + u.getNome());
+                            }
+                        }
+                    }
+
+                    // imprime todos os usuários conectados
+                    System.out.println("Usuarios conectados: " + usuariosConectados.keySet());
+
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }).start();
+    }
+
+
+    private void recebendoFimChat(Usuario remetente) {
+        // 1. Remove o usuário dos conectados, se quiser
+        usuariosConectados.remove(remetente.getNome());
+        ultimoContato.remove(remetente.getNome());
+
+        // 2. Opcional: informar na console/log
+        System.out.println("Chat encerrado por: " + remetente.getNome());
+
+        // 3. Opcional: enviar uma mensagem de aviso ao usuário local
+        enviarMensagem("O chat foi encerrado pelo usuário.", remetente, false);
+
+        // 4. Notificar a interface ou atualizar UI local
+        for (UDPServiceUsuarioListener l : usuarioListeners) {
+            l.usuarioRemovido(remetente); // a UI pode reagir a remoção
+        }
+    }
+
+    public void encerrarChat(Usuario destinatario) {
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            Mensagem msg = new Mensagem();
+            msg.setTipoMensagem(Mensagem.TipoMensagem.fim_chat);
+            msg.setUsuario(usuario.getNome());
+            msg.setStatus(usuario.getStatus().toString());
+
+            byte[] bMensagem = mapper.writeValueAsBytes(msg);
+            DatagramPacket pacote = new DatagramPacket(bMensagem, bMensagem.length, destinatario.getEndereco(), 8080);
+
+            DatagramSocket socket = new DatagramSocket();
+            socket.send(pacote);
+            socket.close();
+
+            System.out.println("Mensagem de fim de chat enviada para: " + destinatario.getNome());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+
 }

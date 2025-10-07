@@ -12,4 +12,7 @@ public interface UDPServiceMensagemListener {
      */
     void mensagemRecebida(String mensagem, Usuario remetente, boolean chatGeral);
 
+
+
+
 }
