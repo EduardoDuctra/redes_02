@@ -21,7 +21,6 @@ public class ChatClientSwing extends JFrame {
     private JList listaChat;
     private DefaultListModel<Usuario> dfListModel;
     private JTabbedPane tabbedPane = new JTabbedPane();
-    // agora é Map para controlar abas por usuário
     private Map<String, PainelChatPVT> chatsAbertos = new HashMap<>();
     private UDPService udpService = new UDPServiceImpl();
     private Usuario USER_GERAL = new Usuario("Geral", null, null);
@@ -71,9 +70,8 @@ public class ChatClientSwing extends JFrame {
                         item.addActionListener(ev -> {
                             PainelChatPVT painel = (PainelChatPVT) tabbedPane.getComponentAt(tab);
 
-                            // envia a mensagem de fim de chat
-                            if (udpService instanceof UDPServiceImpl) {
-                                ((UDPServiceImpl) udpService).encerrarChat(painel.getUsuario());
+                            if (!painel.chatGeral) { // não envia para o chat geral
+                                udpService.enviarMensagem("fim_chat", painel.getUsuario(), false);
                             }
 
                             tabbedPane.remove(tab);
@@ -97,9 +95,38 @@ public class ChatClientSwing extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setTitle("Chat P2P - Redes de Computadores");
 
-        String nomeUsuario = JOptionPane.showInputDialog(this, "Digite seu nome de usuário: ");
-        this.meuUsuario = new Usuario(nomeUsuario, Usuario.StatusUsuario.DISPONIVEL, InetAddress.getLocalHost());
+        // === NOVA PARTE: entrada de nome e status ===
+        String nomeUsuario = JOptionPane.showInputDialog(this, "Digite seu nome de usuário:");
+        if (nomeUsuario == null || nomeUsuario.trim().isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Nome de usuário não pode ser vazio!");
+            System.exit(0);
+        }
 
+        JPanel painelStatus = new JPanel(new GridLayout(2, 1));
+        painelStatus.add(new JLabel("Selecione seu status:"));
+        JComboBox<Usuario.StatusUsuario> comboStatus = new JComboBox<>(Usuario.StatusUsuario.values());
+        painelStatus.add(comboStatus);
+
+        int result = JOptionPane.showConfirmDialog(
+                this,
+                painelStatus,
+                "Status do Usuário",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+
+        if (result != JOptionPane.OK_OPTION) {
+            JOptionPane.showMessageDialog(this, "É necessário selecionar um status para continuar!");
+            System.exit(0);
+        }
+
+        Usuario.StatusUsuario statusSelecionado = (Usuario.StatusUsuario) comboStatus.getSelectedItem();
+        this.meuUsuario = new Usuario(nomeUsuario, statusSelecionado, InetAddress.getLocalHost());
+
+        // Atualiza o título com nome e status
+        setTitle("Chat P2P - " + nomeUsuario + " (" + statusSelecionado.name() + ")");
+
+        // Inicia serviços
         udpService.usuarioAlterado(meuUsuario);
         udpService.addListenerMensagem(new MensagemListener());
         udpService.addListenerUsuario(new UsuarioListener());
@@ -124,7 +151,6 @@ public class ChatClientSwing extends JFrame {
             }
         });
 
-        // adiciona chat geral
         PainelChatPVT geral = new PainelChatPVT(USER_GERAL, true);
         tabbedPane.add("Geral", geral);
         chatsAbertos.put(USER_GERAL.getNome(), geral);
@@ -162,7 +188,6 @@ public class ChatClientSwing extends JFrame {
     }
 
     private class UsuarioListener implements UDPServiceUsuarioListener {
-
         @Override
         public void usuarioAdicionado(Usuario usuario) {
             dfListModel.removeElement(usuario);
@@ -182,10 +207,8 @@ public class ChatClientSwing extends JFrame {
     }
 
     private class MensagemListener implements UDPServiceMensagemListener {
-
         @Override
         public void mensagemRecebida(String mensagem, Usuario remetente, boolean chatGeral) {
-            // evita abrir chat consigo mesmo
             if (!chatGeral && remetente.getNome().equals(meuUsuario.getNome())) {
                 return;
             }
