@@ -251,20 +251,14 @@ public class UDPServiceImpl implements UDPService {
 
 
     private void recebendoFimChat(Usuario remetente) {
-        // 1. Remove o usuário dos conectados, se quiser
-        usuariosConectados.remove(remetente.getNome());
-        ultimoContato.remove(remetente.getNome());
-
-        // 2. Opcional: informar na console/log
         System.out.println("Chat encerrado por: " + remetente.getNome());
 
-        // 3. Opcional: enviar uma mensagem de aviso ao usuário local
-        enviarMensagem("O chat foi encerrado pelo usuário.", remetente, false);
-
-        // 4. Notificar a interface ou atualizar UI local
-        for (UDPServiceUsuarioListener l : usuarioListeners) {
-            l.usuarioRemovido(remetente); // a UI pode reagir a remoção
+        // Notifica apenas a interface do chat privado correspondente
+        for (UDPServiceMensagemListener l : mensagemListeners) {
+            l.mensagemRecebida("O chat foi encerrado pelo usuário " + remetente.getNome(), remetente, false);
         }
+
+        // Não remove o usuário da lista de conectados
     }
 
     public void encerrarChat(Usuario destinatario) {
@@ -276,13 +270,19 @@ public class UDPServiceImpl implements UDPService {
             msg.setStatus(usuario.getStatus().toString());
 
             byte[] bMensagem = mapper.writeValueAsBytes(msg);
-            DatagramPacket pacote = new DatagramPacket(bMensagem, bMensagem.length, destinatario.getEndereco(), 8080);
 
-            DatagramSocket socket = new DatagramSocket();
-            socket.send(pacote);
-            socket.close();
+            if (destinatario.getEndereco() != null) {
+                DatagramSocket socket = new DatagramSocket();
+                DatagramPacket pacote = new DatagramPacket(bMensagem, bMensagem.length,
+                        destinatario.getEndereco(), 8080);
+                socket.send(pacote);
+                socket.close();
 
-            System.out.println("Mensagem de fim de chat enviada para: " + destinatario.getNome());
+                System.out.println("Mensagem de fim de chat enviada para: " + destinatario.getNome());
+            } else {
+                System.out.println("Não foi possível enviar: endereço do destinatário desconhecido");
+            }
+
         } catch (Exception e) {
             e.printStackTrace();
         }
